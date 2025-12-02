@@ -1,12 +1,38 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List, Optional, Dict
+import os
 import re
+from typing import Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+APP_VERSION = "1.2.0"
 
 app = FastAPI(
     title="Pé no Chão NLP API",
     description="Serviço de NLP para extrair premissas (P, Q, R) e conclusão (C) de textos.",
-    version="1.1.0",
+    version=APP_VERSION,
+)
+
+
+def get_allowed_origins() -> List[str]:
+    raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+    parsed = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+    if not parsed or "*" in parsed:
+        return ["*"]
+
+    return parsed
+
+
+ALLOWED_ORIGINS = get_allowed_origins()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -34,9 +60,10 @@ class AnalyzeResponse(BaseModel):
 
 def split_sentences(text: str) -> List[str]:
     """
-    Separa o texto em sentenças usando ponto, interrogação ou exclamação.
+    Separa o texto em sentenças usando pontuação, cuidando de quebras de linha.
     """
-    parts = re.split(r"[.!?]\s+", text.strip())
+    normalized = " ".join(text.split())
+    parts = re.split(r"[.!?]\s+", normalized.strip())
     sentences = [s.strip() for s in parts if s.strip()]
     return sentences
 
@@ -63,6 +90,9 @@ def extract_premises_and_conclusion(text: str):
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_text(payload: AnalyzeRequest):
     text = payload.text.strip()
+
+    if not text:
+        raise HTTPException(status_code=400, detail="O campo 'text' não pode estar vazio.")
 
     if len(text) < 10:
         # texto muito curto, tratamos como um único P
@@ -100,6 +130,16 @@ async def analyze_text(payload: AnalyzeRequest):
     )
 
 
+@app.get("/")
+async def root():
+    return {
+        "status": "ok",
+        "service": "nlp-api",
+        "version": APP_VERSION,
+        "allowed_origins": ALLOWED_ORIGINS,
+    }
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "nlp-api", "version": "1.1.0"}
+    return {"status": "ok", "service": "nlp-api", "version": APP_VERSION}
